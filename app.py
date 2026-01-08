@@ -51,19 +51,19 @@ st.header("みんなの体重推移")
 if not df.empty and '名前' in df.columns:
     df['日付'] = pd.to_datetime(df['日付'])
 
-    # --- ★追加：期間選択フィルタ ---
+    # --- 期間選択フィルタ ---
     st.write("表示期間を選択:")
     period_option = st.radio(
-        label="期間選択", # labelは必須ですが非表示にもできます
+        label="期間選択",
         options=["全期間", "7日", "1か月", "3か月", "1年"],
         index=0,
         horizontal=True,
-        label_visibility="collapsed" # ラベルを隠してすっきりさせる
+        label_visibility="collapsed"
     )
 
     # フィルタリング処理
     filtered_df = df.copy()
-    today = pd.Timestamp.now().normalize() # 今日の日付（時刻なし）
+    today = pd.Timestamp.now().normalize()
 
     if period_option == "7日":
         start_date = today - pd.Timedelta(days=7)
@@ -89,13 +89,17 @@ if not df.empty and '名前' in df.columns:
             labelFontSize=12,
             titleFontSize=14
         ).configure_legend(
+            # ★ここを変更：凡例を下側に表示する設定
+            orient='bottom',      # グラフの下に配置
+            direction='horizontal', # 横並びにする
             titleFontSize=14,
-            labelFontSize=12
+            labelFontSize=12,
+            title=None            # 「名前」というタイトルを消してスッキリさせる（お好みで削除してください）
         )
 
         st.altair_chart(chart, use_container_width=True)
         
-        # 履歴一覧表（フィルタ後のデータを表示）
+        # 履歴一覧表
         with st.expander("履歴一覧表を見る"):
             display_df = filtered_df.copy()
             display_df['日付'] = display_df['日付'].dt.strftime('%Y/%m/%d')
