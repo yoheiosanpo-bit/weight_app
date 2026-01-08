@@ -32,8 +32,7 @@ except Exception as e:
 
 # --- アプリの画面 ---
 
-# ★修正：st.titleの代わりにHTMLを使って文字サイズを小さく指定（20px〜24pxくらいが目安）
-# style='white-space: nowrap;' で強制的に改行を禁止しています
+# タイトル（改行されないようフォントサイズ調整）
 st.markdown("""
     <h1 style='font-size: 22px; white-space: nowrap; margin-bottom: 20px;'>
         うによ-¯•ω•¯-ほこ減量！？チャンネル
@@ -45,18 +44,21 @@ all_records = worksheet.get_all_records()
 df = pd.DataFrame(all_records) if all_records else pd.DataFrame()
 
 # ==========================================
-# 1. 全員のデータを表示（グラフ）
+# 1. 全員のデータを表示（グラフ＆表）
 # ==========================================
 st.header("みんなの体重推移")
 
 if not df.empty and '名前' in df.columns:
     df['日付'] = pd.to_datetime(df['日付'])
     
+    # ★修正：日付フォーマットを「%Y/%m/%d」に変更して年を表示
     chart = alt.Chart(df).mark_line(point=True).encode(
-        x=alt.X('日付', title='日付', axis=alt.Axis(format='%m/%d', labelAngle=0)),
+        # 軸の表示：2024/12/31 のように年を含める
+        x=alt.X('日付', title='日付', axis=alt.Axis(format='%Y/%m/%d', labelAngle=-45)),
         y=alt.Y('体重', title='体重 (kg)', scale=alt.Scale(zero=False)), 
         color='名前',
-        tooltip=[alt.Tooltip('日付', title='日付', format='%m/%d'), '名前', '体重']
+        # マウスホバー時の表示も年を含める
+        tooltip=[alt.Tooltip('日付', title='日付', format='%Y/%m/%d'), '名前', '体重']
     ).interactive().configure_axis(
         labelFontSize=12,
         titleFontSize=14
@@ -66,6 +68,15 @@ if not df.empty and '名前' in df.columns:
     )
 
     st.altair_chart(chart, use_container_width=True)
+    
+    # ★追加：データ一覧（表）を表示（年が変わったか確認しやすくするため）
+    with st.expander("履歴一覧表を見る"):
+        # 日付の新しい順に並べて表示
+        # 日付の表示形式を見やすくフォーマット
+        display_df = df.copy()
+        display_df['日付'] = display_df['日付'].dt.strftime('%Y/%m/%d')
+        st.dataframe(display_df.sort_values('日付', ascending=False), use_container_width=True)
+
 else:
     if df.empty:
         st.info("データがまだありません。")
@@ -108,7 +119,7 @@ st.divider()
 # ==========================================
 st.header("データの管理")
 
-# --- 名前変更機能（重複チェック付き） ---
+# --- 名前変更機能 ---
 with st.expander("登録名を変更する"):
     st.write(f"現在の名前「**{user_name}**」のデータをすべて、新しい名前に書き換えます。")
     new_name_input = st.text_input("新しい名前を入力", key="new_name_input")
