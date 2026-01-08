@@ -51,7 +51,7 @@ st.header("みんなの体重推移")
 if not df.empty and '名前' in df.columns:
     df['日付'] = pd.to_datetime(df['日付'])
 
-    # --- 期間選択フィルタ（文字は出さずにボタンだけ配置） ---
+    # --- 期間選択フィルタ（ボタンのみ） ---
     period_option = st.radio(
         label="期間選択",
         options=["全期間", "7日", "1か月", "3か月", "1年"],
@@ -79,9 +79,38 @@ if not df.empty and '名前' in df.columns:
     
     # グラフ描画
     if not filtered_df.empty:
+        # データの最小日と最大日を取得
+        min_date = filtered_df['日付'].min()
+        max_date = filtered_df['日付'].max()
+
+        # ★修正：余白日数の計算ロジック
+        if period_option == "7日":
+            buffer_days = 1
+        elif period_option == "1か月":
+            buffer_days = 5
+        elif period_option == "3か月":
+            buffer_days = 15
+        elif period_option == "1年":
+            buffer_days = 60
+        else:
+            # 「全期間」の場合：表示期間の15%を計算
+            duration_days = (max_date - min_date).days
+            buffer_days = int(duration_days * 0.15)
+            # データが1件しかない場合などで0にならないよう最低1日を確保
+            if buffer_days < 1:
+                buffer_days = 1
+        
+        # 指定された日数分だけ未来の日付を追加
+        future_buffer = max_date + pd.Timedelta(days=buffer_days)
+        
+        # X軸のドメイン（範囲）リストを作成
+        domain_range = [min_date, future_buffer]
+
         chart = alt.Chart(filtered_df).mark_line(point=True).encode(
-            # ★ここを変更：title=None にして「日付」という文字を削除
-            x=alt.X('日付', title=None, axis=alt.Axis(format='%Y/%m/%d', labelAngle=-45)),
+            x=alt.X('日付', title=None, 
+                    axis=alt.Axis(format='%Y/%m/%d', labelAngle=-45),
+                    scale=alt.Scale(domain=domain_range)
+            ),
             y=alt.Y('体重', title='体重 (kg)', scale=alt.Scale(zero=False)), 
             color='名前',
             tooltip=[alt.Tooltip('日付', title='日付', format='%Y/%m/%d'), '名前', '体重']
