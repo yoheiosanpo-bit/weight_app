@@ -32,7 +32,7 @@ except Exception as e:
 
 # --- アプリの画面 ---
 
-# タイトル（改行されないようフォントサイズ調整）
+# タイトル
 st.markdown("""
     <h1 style='font-size: 22px; white-space: nowrap; margin-bottom: 20px;'>
         うによ-¯•ω•¯-ほこ減量！？チャンネル
@@ -50,32 +50,58 @@ st.header("みんなの体重推移")
 
 if not df.empty and '名前' in df.columns:
     df['日付'] = pd.to_datetime(df['日付'])
-    
-    # ★修正：日付フォーマットを「%Y/%m/%d」に変更して年を表示
-    chart = alt.Chart(df).mark_line(point=True).encode(
-        # 軸の表示：2024/12/31 のように年を含める
-        x=alt.X('日付', title='日付', axis=alt.Axis(format='%Y/%m/%d', labelAngle=-45)),
-        y=alt.Y('体重', title='体重 (kg)', scale=alt.Scale(zero=False)), 
-        color='名前',
-        # マウスホバー時の表示も年を含める
-        tooltip=[alt.Tooltip('日付', title='日付', format='%Y/%m/%d'), '名前', '体重']
-    ).interactive().configure_axis(
-        labelFontSize=12,
-        titleFontSize=14
-    ).configure_legend(
-        titleFontSize=14,
-        labelFontSize=12
+
+    # --- ★追加：期間選択フィルタ ---
+    st.write("表示期間を選択:")
+    period_option = st.radio(
+        label="期間選択", # labelは必須ですが非表示にもできます
+        options=["全期間", "7日", "1か月", "3か月", "1年"],
+        index=0,
+        horizontal=True,
+        label_visibility="collapsed" # ラベルを隠してすっきりさせる
     )
 
-    st.altair_chart(chart, use_container_width=True)
+    # フィルタリング処理
+    filtered_df = df.copy()
+    today = pd.Timestamp.now().normalize() # 今日の日付（時刻なし）
+
+    if period_option == "7日":
+        start_date = today - pd.Timedelta(days=7)
+        filtered_df = filtered_df[filtered_df['日付'] >= start_date]
+    elif period_option == "1か月":
+        start_date = today - pd.DateOffset(months=1)
+        filtered_df = filtered_df[filtered_df['日付'] >= start_date]
+    elif period_option == "3か月":
+        start_date = today - pd.DateOffset(months=3)
+        filtered_df = filtered_df[filtered_df['日付'] >= start_date]
+    elif period_option == "1年":
+        start_date = today - pd.DateOffset(years=1)
+        filtered_df = filtered_df[filtered_df['日付'] >= start_date]
     
-    # ★追加：データ一覧（表）を表示（年が変わったか確認しやすくするため）
-    with st.expander("履歴一覧表を見る"):
-        # 日付の新しい順に並べて表示
-        # 日付の表示形式を見やすくフォーマット
-        display_df = df.copy()
-        display_df['日付'] = display_df['日付'].dt.strftime('%Y/%m/%d')
-        st.dataframe(display_df.sort_values('日付', ascending=False), use_container_width=True)
+    # データがある場合のみグラフ描画
+    if not filtered_df.empty:
+        chart = alt.Chart(filtered_df).mark_line(point=True).encode(
+            x=alt.X('日付', title='日付', axis=alt.Axis(format='%Y/%m/%d', labelAngle=-45)),
+            y=alt.Y('体重', title='体重 (kg)', scale=alt.Scale(zero=False)), 
+            color='名前',
+            tooltip=[alt.Tooltip('日付', title='日付', format='%Y/%m/%d'), '名前', '体重']
+        ).interactive().configure_axis(
+            labelFontSize=12,
+            titleFontSize=14
+        ).configure_legend(
+            titleFontSize=14,
+            labelFontSize=12
+        )
+
+        st.altair_chart(chart, use_container_width=True)
+        
+        # 履歴一覧表（フィルタ後のデータを表示）
+        with st.expander("履歴一覧表を見る"):
+            display_df = filtered_df.copy()
+            display_df['日付'] = display_df['日付'].dt.strftime('%Y/%m/%d')
+            st.dataframe(display_df.sort_values('日付', ascending=False), use_container_width=True)
+    else:
+        st.info(f"過去 {period_option} のデータはありません。")
 
 else:
     if df.empty:
@@ -104,7 +130,6 @@ with col2:
 
 if st.button("保存"):
     date_str = input_date.strftime('%Y-%m-%d')
-    # 名前はC列（3列目）を想定
     row_data = [date_str, input_weight, user_name]
     
     worksheet.append_row(row_data)
@@ -124,13 +149,11 @@ with st.expander("登録名を変更する"):
     st.write(f"現在の名前「**{user_name}**」のデータをすべて、新しい名前に書き換えます。")
     new_name_input = st.text_input("新しい名前を入力", key="new_name_input")
 
-    # 状態管理
     if 'confirm_merge' not in st.session_state:
         st.session_state.confirm_merge = False
     if 'target_name' not in st.session_state:
         st.session_state.target_name = ""
 
-    # 名前変更を実行する関数
     def execute_name_change(current_name, target_name):
         try:
             cells_to_update = []
@@ -164,7 +187,6 @@ with st.expander("登録名を変更する"):
         except Exception as e:
             st.error(f"エラーが発生しました: {e}")
 
-    # ボタン処理
     if st.button("名前変更を確認"):
         if not new_name_input:
              st.warning("新しい名前を入力してください。")
@@ -181,7 +203,6 @@ with st.expander("登録名を変更する"):
             else:
                 execute_name_change(user_name, new_name_input)
 
-    # 統合確認
     if st.session_state.confirm_merge:
         st.warning(
             f"⚠️ 名前「{st.session_state.target_name}」は既に存在します。\n\n"
