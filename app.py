@@ -31,7 +31,14 @@ except Exception as e:
     st.stop()
 
 # --- アプリの画面 ---
-st.title("うによ-¯•ω•¯-ほこ減量！？チャンネル")
+
+# ★修正：st.titleの代わりにHTMLを使って文字サイズを小さく指定（20px〜24pxくらいが目安）
+# style='white-space: nowrap;' で強制的に改行を禁止しています
+st.markdown("""
+    <h1 style='font-size: 22px; white-space: nowrap; margin-bottom: 20px;'>
+        うによ-¯•ω•¯-ほこ減量！？チャンネル
+    </h1>
+""", unsafe_allow_html=True)
 
 # データを取得
 all_records = worksheet.get_all_records()
@@ -45,20 +52,15 @@ st.header("みんなの体重推移")
 if not df.empty and '名前' in df.columns:
     df['日付'] = pd.to_datetime(df['日付'])
     
-    # ★ここを修正：日付フォーマットと文字サイズの調整
     chart = alt.Chart(df).mark_line(point=True).encode(
-        # axis=alt.Axis(format='%m/%d') で「12/01」のような形式に指定
         x=alt.X('日付', title='日付', axis=alt.Axis(format='%m/%d', labelAngle=0)),
         y=alt.Y('体重', title='体重 (kg)', scale=alt.Scale(zero=False)), 
         color='名前',
-        # マウスを乗せたときの表示も「12/01」形式にする
         tooltip=[alt.Tooltip('日付', title='日付', format='%m/%d'), '名前', '体重']
     ).interactive().configure_axis(
-        # PCで見やすいように文字サイズを大きくする設定
         labelFontSize=12,
         titleFontSize=14
     ).configure_legend(
-        # 凡例（名前リスト）の文字サイズも調整
         titleFontSize=14,
         labelFontSize=12
     )
@@ -106,47 +108,82 @@ st.divider()
 # ==========================================
 st.header("データの管理")
 
-# --- 名前変更機能 ---
+# --- 名前変更機能（重複チェック付き） ---
 with st.expander("登録名を変更する"):
     st.write(f"現在の名前「**{user_name}**」のデータをすべて、新しい名前に書き換えます。")
-    new_name = st.text_input("新しい名前を入力", key="new_name_input")
-    
-    if st.button("名前を変更する"):
-        if new_name and new_name != user_name:
-            try:
-                # 変更対象のセルリストを作成
-                cells_to_update = []
-                all_values = worksheet.get_all_values()
-                header = all_values[0]
-                try:
-                    name_col_index = header.index("名前")
-                except ValueError:
-                    st.error("スプレッドシートに「名前」列が見つかりません。")
-                    st.stop()
+    new_name_input = st.text_input("新しい名前を入力", key="new_name_input")
 
-                count = 0
-                for i, row in enumerate(all_values):
-                    if i == 0: continue
-                    if len(row) > name_col_index and row[name_col_index] == user_name:
-                        cells_to_update.append(
-                            Cell(row=i+1, col=name_col_index+1, value=new_name)
-                        )
-                        count += 1
+    # 状態管理
+    if 'confirm_merge' not in st.session_state:
+        st.session_state.confirm_merge = False
+    if 'target_name' not in st.session_state:
+        st.session_state.target_name = ""
+
+    # 名前変更を実行する関数
+    def execute_name_change(current_name, target_name):
+        try:
+            cells_to_update = []
+            all_values = worksheet.get_all_values()
+            
+            header = all_values[0]
+            try:
+                name_col_index = header.index("名前")
+            except ValueError:
+                st.error("スプレッドシートに「名前」列が見つかりません。")
+                return
+
+            count = 0
+            for i, row in enumerate(all_values):
+                if i == 0: continue
+                if len(row) > name_col_index and row[name_col_index] == current_name:
+                    cells_to_update.append(
+                        Cell(row=i+1, col=name_col_index+1, value=target_name)
+                    )
+                    count += 1
+            
+            if cells_to_update:
+                worksheet.update_cells(cells_to_update)
+                st.success(f"{count} 件のデータを「{current_name}」から「{target_name}」に変更しました！")
+                st.session_state.confirm_merge = False
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.warning(f"「{current_name}」のデータが見つかりませんでした。")
                 
-                if cells_to_update:
-                    worksheet.update_cells(cells_to_update)
-                    st.success(f"{count} 件のデータを「{new_name}」に変更しました！")
-                    time.sleep(2)
-                    st.rerun()
-                else:
-                    st.warning(f"「{user_name}」のデータが見つかりませんでした。")
-                    
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
-        elif new_name == user_name:
-            st.warning("新しい名前が現在の名前と同じです。")
+        except Exception as e:
+            st.error(f"エラーが発生しました: {e}")
+
+    # ボタン処理
+    if st.button("名前変更を確認"):
+        if not new_name_input:
+             st.warning("新しい名前を入力してください。")
+        elif new_name_input == user_name:
+             st.warning("新しい名前が現在の名前と同じです。")
         else:
-            st.warning("新しい名前を入力してください。")
+            existing_names = []
+            if not df.empty and '名前' in df.columns:
+                existing_names = df['名前'].unique().tolist()
+            
+            if new_name_input in existing_names:
+                st.session_state.confirm_merge = True
+                st.session_state.target_name = new_name_input
+            else:
+                execute_name_change(user_name, new_name_input)
+
+    # 統合確認
+    if st.session_state.confirm_merge:
+        st.warning(
+            f"⚠️ 名前「{st.session_state.target_name}」は既に存在します。\n\n"
+            f"実行すると「{user_name}」のデータが「{st.session_state.target_name}」に統合されます。"
+        )
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            if st.button("統合して変更する", type="primary"):
+                execute_name_change(user_name, st.session_state.target_name)
+        with col_m2:
+            if st.button("キャンセルして戻る"):
+                st.session_state.confirm_merge = False
+                st.rerun()
 
 # --- データ削除機能 ---
 with st.expander("データを削除する"):
