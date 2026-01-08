@@ -83,24 +83,19 @@ if not df.empty and '名前' in df.columns:
         min_date = filtered_df['日付'].min()
         max_date = filtered_df['日付'].max()
 
-        # ★修正：余白日数の計算ロジック
-        if period_option == "7日":
-            buffer_days = 1
-        elif period_option == "1か月":
-            buffer_days = 5
-        elif period_option == "3か月":
-            buffer_days = 15
-        elif period_option == "1年":
-            buffer_days = 60
-        else:
-            # 「全期間」の場合：表示期間の15%を計算
-            duration_days = (max_date - min_date).days
-            buffer_days = int(duration_days * 0.15)
-            # データが1件しかない場合などで0にならないよう最低1日を確保
-            if buffer_days < 1:
-                buffer_days = 1
+        # ★修正：どの期間が選ばれていても、データ期間の15%を余白にする
+        duration_days = (max_date - min_date).days
         
-        # 指定された日数分だけ未来の日付を追加
+        # 期間が極端に短い（0日など）場合に備えて最低1日を確保
+        if duration_days <= 0:
+             buffer_days = 1
+        else:
+             buffer_days = int(duration_days * 0.15)
+             # 計算結果が0日になる場合（例:データが2日分しかない等）も最低1日は確保
+             if buffer_days < 1:
+                 buffer_days = 1
+        
+        # 計算した日数分だけ未来の日付を追加
         future_buffer = max_date + pd.Timedelta(days=buffer_days)
         
         # X軸のドメイン（範囲）リストを作成
