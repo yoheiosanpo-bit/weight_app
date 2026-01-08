@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from gspread import Cell # ★追加：一括更新用
+from gspread import Cell
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 import time
@@ -33,7 +33,7 @@ except Exception as e:
 # --- アプリの画面 ---
 st.title("うによ-¯•ω•¯-ほこ減量！？チャンネル")
 
-# データを取得（アプリ全体で使うため最初に取得）
+# データを取得
 all_records = worksheet.get_all_records()
 df = pd.DataFrame(all_records) if all_records else pd.DataFrame()
 
@@ -45,12 +45,23 @@ st.header("みんなの体重推移")
 if not df.empty and '名前' in df.columns:
     df['日付'] = pd.to_datetime(df['日付'])
     
+    # ★ここを修正：日付フォーマットと文字サイズの調整
     chart = alt.Chart(df).mark_line(point=True).encode(
-        x=alt.X('日付', title='日付'),
+        # axis=alt.Axis(format='%m/%d') で「12/01」のような形式に指定
+        x=alt.X('日付', title='日付', axis=alt.Axis(format='%m/%d', labelAngle=0)),
         y=alt.Y('体重', title='体重 (kg)', scale=alt.Scale(zero=False)), 
         color='名前',
-        tooltip=['日付', '名前', '体重']
-    ).interactive()
+        # マウスを乗せたときの表示も「12/01」形式にする
+        tooltip=[alt.Tooltip('日付', title='日付', format='%m/%d'), '名前', '体重']
+    ).interactive().configure_axis(
+        # PCで見やすいように文字サイズを大きくする設定
+        labelFontSize=12,
+        titleFontSize=14
+    ).configure_legend(
+        # 凡例（名前リスト）の文字サイズも調整
+        titleFontSize=14,
+        labelFontSize=12
+    )
 
     st.altair_chart(chart, use_container_width=True)
 else:
@@ -105,36 +116,27 @@ with st.expander("登録名を変更する"):
             try:
                 # 変更対象のセルリストを作成
                 cells_to_update = []
-                
-                # 全データをチェックして、対象の行を探す
-                # get_all_valuesだとヘッダーが含まれるので注意（index 0 はヘッダー）
                 all_values = worksheet.get_all_values()
-                
-                # ヘッダー行で「名前」列が何番目か探す（通常は3番目=index 2）
                 header = all_values[0]
                 try:
-                    name_col_index = header.index("名前") # 0始まりのインデックス
+                    name_col_index = header.index("名前")
                 except ValueError:
                     st.error("スプレッドシートに「名前」列が見つかりません。")
                     st.stop()
 
                 count = 0
                 for i, row in enumerate(all_values):
-                    if i == 0: continue # ヘッダーはスキップ
-                    
-                    # 現在の行の名前が、変更元の名前と一致するか
+                    if i == 0: continue
                     if len(row) > name_col_index and row[name_col_index] == user_name:
-                        # 更新用セルオブジェクトを作成 (行番号は i+1, 列番号は name_col_index+1)
                         cells_to_update.append(
                             Cell(row=i+1, col=name_col_index+1, value=new_name)
                         )
                         count += 1
                 
                 if cells_to_update:
-                    # 一括更新実行
                     worksheet.update_cells(cells_to_update)
                     st.success(f"{count} 件のデータを「{new_name}」に変更しました！")
-                    time.sleep(2) # 読む時間を少し作る
+                    time.sleep(2)
                     st.rerun()
                 else:
                     st.warning(f"「{user_name}」のデータが見つかりませんでした。")
@@ -149,7 +151,6 @@ with st.expander("登録名を変更する"):
 # --- データ削除機能 ---
 with st.expander("データを削除する"):
     if not df.empty and '名前' in df.columns:
-        # 日付比較用に変換
         df['日付_str'] = df['日付'].dt.strftime('%Y-%m-%d')
         my_df = df[df['名前'] == user_name].sort_values('日付', ascending=False)
         
@@ -165,16 +166,12 @@ with st.expander("データを削除する"):
                 try:
                     all_values = worksheet.get_all_values()
                     row_to_delete = None
-                    
-                    # ヘッダー位置取得
                     header = all_values[0]
                     name_idx = header.index("名前")
                     date_idx = header.index("日付")
 
                     for i, row in enumerate(all_values):
                         if i == 0: continue
-                        
-                        # 日付と名前が一致する行を探す
                         if row[date_idx] == selected_date and row[name_idx] == user_name:
                             row_to_delete = i + 1
                             break
