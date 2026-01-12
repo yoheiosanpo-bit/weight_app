@@ -79,26 +79,19 @@ if not df.empty and '名前' in df.columns:
     
     # グラフ描画
     if not filtered_df.empty:
-        # データの最小日と最大日を取得
         min_date = filtered_df['日付'].min()
         max_date = filtered_df['日付'].max()
 
-        # ★修正：どの期間が選ばれていても、データ期間の15%を余白にする
+        # 余白日数の計算
         duration_days = (max_date - min_date).days
-        
-        # 期間が極端に短い（0日など）場合に備えて最低1日を確保
         if duration_days <= 0:
              buffer_days = 1
         else:
-             buffer_days = int(duration_days * 0.15)
-             # 計算結果が0日になる場合（例:データが2日分しかない等）も最低1日は確保
+             buffer_days = int(duration_days * 0.15) # 15%の余白
              if buffer_days < 1:
                  buffer_days = 1
         
-        # 計算した日数分だけ未来の日付を追加
         future_buffer = max_date + pd.Timedelta(days=buffer_days)
-        
-        # X軸のドメイン（範囲）リストを作成
         domain_range = [min_date, future_buffer]
 
         chart = alt.Chart(filtered_df).mark_line(point=True).encode(
@@ -122,7 +115,6 @@ if not df.empty and '名前' in df.columns:
 
         st.altair_chart(chart, use_container_width=True)
         
-        # 履歴一覧表
         with st.expander("履歴一覧表を見る"):
             display_df = filtered_df.copy()
             display_df['日付'] = display_df['日付'].dt.strftime('%Y/%m/%d')
@@ -139,14 +131,31 @@ else:
 st.divider()
 
 # ==========================================
-# 2. 新しいデータを入力
+# 2. 新しいデータを入力（★ここを修正）
 # ==========================================
 st.header("新しく記録する")
 
-user_name = st.text_input("名前を入力してください", key="user_name")
+# --- 名前選択エリア ---
+existing_names = []
+if not df.empty and '名前' in df.columns:
+    # 名前リストを取得して五十音順（あるいはデータ順）に並べる
+    existing_names = sorted(df['名前'].unique().tolist())
 
+# 選択肢：既存の名前 ＋ 「新規登録」
+name_options = existing_names + ["➕ 新規登録"]
+
+# セレクトボックスを表示
+selected_name_option = st.selectbox("名前を選択してください", name_options, key="name_selector")
+
+# 「新規登録」が選ばれた場合のみ、入力欄を表示
+if selected_name_option == "➕ 新規登録":
+    user_name = st.text_input("新しい名前を入力", key="new_name_input")
+else:
+    user_name = selected_name_option
+
+# 名前が決まっていない場合はここでストップ
 if not user_name:
-    st.info("記録、または管理機能を使うには名前を入力してください。")
+    st.info("名前を選択するか、新しく入力してください。")
     st.stop()
 
 col1, col2 = st.columns(2)
@@ -174,7 +183,7 @@ st.header("データの管理")
 # --- 名前変更機能 ---
 with st.expander("登録名を変更する"):
     st.write(f"現在の名前「**{user_name}**」のデータをすべて、新しい名前に書き換えます。")
-    new_name_input = st.text_input("新しい名前を入力", key="new_name_input")
+    new_name_input = st.text_input("変更後の名前を入力", key="rename_input")
 
     if 'confirm_merge' not in st.session_state:
         st.session_state.confirm_merge = False
@@ -220,11 +229,11 @@ with st.expander("登録名を変更する"):
         elif new_name_input == user_name:
              st.warning("新しい名前が現在の名前と同じです。")
         else:
-            existing_names = []
+            existing_names_list = []
             if not df.empty and '名前' in df.columns:
-                existing_names = df['名前'].unique().tolist()
+                existing_names_list = df['名前'].unique().tolist()
             
-            if new_name_input in existing_names:
+            if new_name_input in existing_names_list:
                 st.session_state.confirm_merge = True
                 st.session_state.target_name = new_name_input
             else:
