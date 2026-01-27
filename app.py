@@ -30,6 +30,17 @@ except Exception as e:
     st.error(f"スプレッドシートへの接続に失敗しました: {e}")
     st.stop()
 
+# --- ヘッダー確認と「身長」列の自動追加 ---
+# 既存のヘッダーに「身長」がない場合、自動で追加してエラーを防ぐ
+try:
+    header_values = worksheet.row_values(1)
+    if "身長" not in header_values:
+        # 空いている次の列に「身長」を追加
+        next_col = len(header_values) + 1
+        worksheet.update_cell(1, next_col, "身長")
+except Exception:
+    pass # エラー時は無視して進む（データ取得時にハンドリング）
+
 # --- アプリの画面 ---
 
 # タイトル
@@ -44,14 +55,38 @@ all_records = worksheet.get_all_records()
 df = pd.DataFrame(all_records) if all_records else pd.DataFrame()
 
 # ==========================================
-# 1. 全員のデータを表示（グラフ＆表）
+# 1. データ加工（BMI計算）
 # ==========================================
-st.header("みんなの体重推移")
-
+# データが存在する場合の処理
 if not df.empty and '名前' in df.columns:
     df['日付'] = pd.to_datetime(df['日付'])
 
-    # --- 期間選択フィルタ（ボタンのみ） ---
+    # 身長列がない場合は作成（念のため）
+    if '身長' not in df.columns:
+        df['身長'] = None
+
+    # 身長データを数値化（空文字等はNaNにする）
+    df['身長'] = pd.to_numeric(df['身長'], errors='coerce')
+
+    # 日付順に並べる
+    df = df.sort_values('日付')
+
+    # 【重要】身長の穴埋め処理
+    # 名前ごとにグループ化し、過去の値を現在にコピー(ffill)、未来の値を過去にコピー(bfill)
+    # これにより、一度でも身長を入力すれば、その前後の期間もBMI計算可能になります
+    df['身長_filled'] = df.groupby('名前')['身長'].ffill().bfill()
+
+    # BMI計算: 体重 / (身長m)^2
+    # 身長はcmなので /100 する
+    df['BMI'] = df['体重'] / ((df['身長_filled'] / 100) ** 2)
+
+# ==========================================
+# 2. グラフ表示（体重 ＆ BMI）
+# ==========================================
+st.header("みんなの推移")
+
+if not df.empty and '名前' in df.columns:
+    # --- 期間選択フィルタ ---
     period_option = st.radio(
         label="期間選択",
         options=["全期間", "7日", "1か月", "3か月", "1年"],
@@ -77,24 +112,28 @@ if not df.empty and '名前' in df.columns:
         start_date = today - pd.DateOffset(years=1)
         filtered_df = filtered_df[filtered_df['日付'] >= start_date]
     
-    # グラフ描画
+    # データがある場合のみ描画
     if not filtered_df.empty:
+        # --- 共通のX軸設定（余白計算） ---
         min_date = filtered_df['日付'].min()
         max_date = filtered_df['日付'].max()
-
-        # 余白日数の計算
         duration_days = (max_date - min_date).days
-        if duration_days <= 0:
-             buffer_days = 1
-        else:
-             buffer_days = int(duration_days * 0.15) # 15%の余白
-             if buffer_days < 1:
-                 buffer_days = 1
+
+        # 余白計算
+        if period_option == "7日": buffer_days = 1
+        elif period_option == "1か月": buffer_days = 5
+        elif period_option == "3か月": buffer_days = 15
+        elif period_option == "1年": buffer_days = 60
+        else: # 全期間
+             buffer_days = int(duration_days * 0.15) if duration_days > 0 else 1
+             if buffer_days < 1: buffer_days = 1
         
         future_buffer = max_date + pd.Timedelta(days=buffer_days)
         domain_range = [min_date, future_buffer]
 
-        chart = alt.Chart(filtered_df).mark_line(point=True).encode(
+        # --- ① 体重グラフ ---
+        st.subheader("体重 (kg)")
+        chart_weight = alt.Chart(filtered_df).mark_line(point=True).encode(
             x=alt.X('日付', title=None, 
                     axis=alt.Axis(format='%Y/%m/%d', labelAngle=-45),
                     scale=alt.Scale(domain=domain_range)
@@ -103,80 +142,132 @@ if not df.empty and '名前' in df.columns:
             color='名前',
             tooltip=[alt.Tooltip('日付', title='日付', format='%Y/%m/%d'), '名前', '体重']
         ).interactive().configure_axis(
-            labelFontSize=12,
-            titleFontSize=14
+            labelFontSize=12, titleFontSize=14
         ).configure_legend(
-            orient='bottom',      
-            direction='horizontal', 
-            titleFontSize=14,
-            labelFontSize=12,
-            title=None            
+            orient='bottom', direction='horizontal', title=None
         )
+        st.altair_chart(chart_weight, use_container_width=True)
 
-        st.altair_chart(chart, use_container_width=True)
+        # --- ② BMIグラフ ---
+        st.subheader("BMI")
+        # BMIデータがある（計算できている）行だけ抽出
+        bmi_df = filtered_df.dropna(subset=['BMI'])
         
+        if not bmi_df.empty:
+            chart_bmi = alt.Chart(bmi_df).mark_line(point=True).encode(
+                x=alt.X('日付', title=None, 
+                        axis=alt.Axis(format='%Y/%m/%d', labelAngle=-45),
+                        scale=alt.Scale(domain=domain_range)
+                ),
+                y=alt.Y('BMI', title='BMI', scale=alt.Scale(zero=False)), 
+                color='名前',
+                tooltip=[
+                    alt.Tooltip('日付', title='日付', format='%Y/%m/%d'), 
+                    '名前', 
+                    alt.Tooltip('BMI', format='.1f'),
+                    alt.Tooltip('身長_filled', title='身長(目安)', format='.1f')
+                ]
+            ).interactive().configure_axis(
+                labelFontSize=12, titleFontSize=14
+            ).configure_legend(
+                orient='bottom', direction='horizontal', title=None
+            )
+            st.altair_chart(chart_bmi, use_container_width=True)
+        else:
+            st.info("身長データがないため、BMIを表示できません。")
+
+        # 履歴一覧表
         with st.expander("履歴一覧表を見る"):
             display_df = filtered_df.copy()
             display_df['日付'] = display_df['日付'].dt.strftime('%Y/%m/%d')
-            st.dataframe(display_df.sort_values('日付', ascending=False), use_container_width=True)
+            # 表示用にカラムを整理
+            cols = ['日付', '名前', '体重']
+            if '身長' in display_df.columns:
+                cols.append('身長')
+            if 'BMI' in display_df.columns:
+                cols.append('BMI')
+            st.dataframe(display_df[cols].sort_values('日付', ascending=False), use_container_width=True)
+
     else:
         st.info(f"過去 {period_option} のデータはありません。")
-
 else:
     if df.empty:
         st.info("データがまだありません。")
     else:
-        st.error("エラー：スプレッドシートに「名前」列がありません。")
+        st.error("エラー：データ形式が正しくありません。")
 
 st.divider()
 
 # ==========================================
-# 2. 新しいデータを入力（★ここを修正）
+# 3. 新しいデータを入力
 # ==========================================
 st.header("新しく記録する")
 
 # --- 名前選択エリア ---
 existing_names = []
 if not df.empty and '名前' in df.columns:
-    # 名前リストを取得して五十音順（あるいはデータ順）に並べる
     existing_names = sorted(df['名前'].unique().tolist())
 
-# 選択肢：既存の名前 ＋ 「新規登録」
 name_options = existing_names + ["➕ 新規登録"]
-
-# セレクトボックスを表示
 selected_name_option = st.selectbox("名前を選択してください", name_options, key="name_selector")
 
-# 「新規登録」が選ばれた場合のみ、入力欄を表示
 if selected_name_option == "➕ 新規登録":
     user_name = st.text_input("新しい名前を入力", key="new_name_input")
 else:
     user_name = selected_name_option
 
-# 名前が決まっていない場合はここでストップ
 if not user_name:
     st.info("名前を選択するか、新しく入力してください。")
     st.stop()
 
+# --- 入力フォーム ---
 col1, col2 = st.columns(2)
 with col1:
     input_date = st.date_input('日付', datetime.today())
 with col2:
     input_weight = st.number_input('体重 (kg)', min_value=0.0, step=0.1, format="%.1f")
 
+# --- 身長入力（オプション） ---
+# チェックボックスで入力欄の表示/非表示を切り替え
+update_height = st.checkbox("身長も登録・変更する（必要な時だけチェック）")
+input_height = None
+
+if update_height:
+    # 過去に入力された最新の身長を取得してデフォルト値にする
+    current_height_val = 160.0 # デフォルト
+    if not df.empty and '身長_filled' in df.columns:
+        user_data = df[df['名前'] == user_name]
+        if not user_data.empty:
+            last_h = user_data['身長_filled'].iloc[-1]
+            if pd.notna(last_h):
+                current_height_val = float(last_h)
+    
+    input_height = st.number_input('身長 (cm)', min_value=0.0, step=0.1, value=current_height_val, format="%.1f")
+
 if st.button("保存"):
     date_str = input_date.strftime('%Y-%m-%d')
-    row_data = [date_str, input_weight, user_name]
+    
+    # 保存するデータの準備
+    # カラム順序：日付, 体重, 名前, 身長
+    # ※スプレッドシートの列順序に合わせています
+    height_to_save = input_height if update_height else ""
+    
+    row_data = [date_str, input_weight, user_name, height_to_save]
     
     worksheet.append_row(row_data)
-    st.success(f"{user_name} さんのデータを保存しました！")
+    
+    msg = f"{user_name} さんのデータを保存しました！"
+    if update_height:
+        msg += f" (身長: {input_height}cm)"
+        
+    st.success(msg)
     time.sleep(1)
     st.rerun()
 
 st.divider()
 
 # ==========================================
-# 3. データの管理（削除・名前変更）
+# 4. データの管理（削除・名前変更）
 # ==========================================
 st.header("データの管理")
 
@@ -194,12 +285,11 @@ with st.expander("登録名を変更する"):
         try:
             cells_to_update = []
             all_values = worksheet.get_all_values()
-            
             header = all_values[0]
             try:
                 name_col_index = header.index("名前")
             except ValueError:
-                st.error("スプレッドシートに「名前」列が見つかりません。")
+                st.error("名前列が見つかりません")
                 return
 
             count = 0
@@ -213,43 +303,34 @@ with st.expander("登録名を変更する"):
             
             if cells_to_update:
                 worksheet.update_cells(cells_to_update)
-                st.success(f"{count} 件のデータを「{current_name}」から「{target_name}」に変更しました！")
+                st.success(f"{count} 件変更しました！")
                 st.session_state.confirm_merge = False
                 time.sleep(2)
                 st.rerun()
             else:
-                st.warning(f"「{current_name}」のデータが見つかりませんでした。")
-                
+                st.warning("対象データなし")
         except Exception as e:
-            st.error(f"エラーが発生しました: {e}")
+            st.error(f"エラー: {e}")
 
     if st.button("名前変更を確認"):
-        if not new_name_input:
-             st.warning("新しい名前を入力してください。")
-        elif new_name_input == user_name:
-             st.warning("新しい名前が現在の名前と同じです。")
-        else:
-            existing_names_list = []
-            if not df.empty and '名前' in df.columns:
-                existing_names_list = df['名前'].unique().tolist()
-            
-            if new_name_input in existing_names_list:
+        if new_name_input and new_name_input != user_name:
+            existing_list = df['名前'].unique().tolist() if not df.empty else []
+            if new_name_input in existing_list:
                 st.session_state.confirm_merge = True
                 st.session_state.target_name = new_name_input
             else:
                 execute_name_change(user_name, new_name_input)
+        else:
+            st.warning("新しい名前を入力してください")
 
     if st.session_state.confirm_merge:
-        st.warning(
-            f"⚠️ 名前「{st.session_state.target_name}」は既に存在します。\n\n"
-            f"実行すると「{user_name}」のデータが「{st.session_state.target_name}」に統合されます。"
-        )
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            if st.button("統合して変更する", type="primary"):
+        st.warning(f"名前「{st.session_state.target_name}」は既に存在します。統合しますか？")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("統合実行", type="primary"):
                 execute_name_change(user_name, st.session_state.target_name)
-        with col_m2:
-            if st.button("キャンセルして戻る"):
+        with c2:
+            if st.button("キャンセル"):
                 st.session_state.confirm_merge = False
                 st.rerun()
 
@@ -260,37 +341,32 @@ with st.expander("データを削除する"):
         my_df = df[df['名前'] == user_name].sort_values('日付', ascending=False)
         
         if not my_df.empty:
-            st.write("削除したいデータの日付を選んでください。")
             date_options = my_df['日付_str'].tolist()
             selected_date = st.selectbox("日付を選択", date_options, key="delete_date")
+            target_data = my_df[my_df['日付_str'] == selected_date].iloc[0]
             
-            target_row_data = my_df[my_df['日付_str'] == selected_date].iloc[0]
-            st.warning(f"警告：{selected_date} の記録（{target_row_data['体重']}kg）を削除しますか？")
+            st.warning(f"{selected_date} の記録（{target_data['体重']}kg）を削除しますか？")
             
             if st.button("削除実行", type="primary"):
                 try:
-                    all_values = worksheet.get_all_values()
-                    row_to_delete = None
-                    header = all_values[0]
+                    all_vals = worksheet.get_all_values()
+                    header = all_vals[0]
                     name_idx = header.index("名前")
                     date_idx = header.index("日付")
-
-                    for i, row in enumerate(all_values):
-                        if i == 0: continue
-                        if row[date_idx] == selected_date and row[name_idx] == user_name:
-                            row_to_delete = i + 1
+                    
+                    row_idx = None
+                    for i, r in enumerate(all_vals):
+                        if i==0: continue
+                        if r[date_idx] == selected_date and r[name_idx] == user_name:
+                            row_idx = i+1
                             break
                     
-                    if row_to_delete:
-                        worksheet.delete_rows(row_to_delete)
-                        st.success("削除しました。")
+                    if row_idx:
+                        worksheet.delete_rows(row_idx)
+                        st.success("削除完了")
                         time.sleep(1)
                         st.rerun()
-                    else:
-                        st.error("削除対象の行が見つかりませんでした。")
                 except Exception as e:
-                    st.error(f"削除中にエラーが発生しました: {e}")
+                    st.error(f"削除エラー: {e}")
         else:
-            st.info("削除可能なデータがありません。")
-    else:
-        st.info("データがありません。")
+            st.info("データなし")
